@@ -1,4 +1,4 @@
-# Language Learning Curriculum API
+# Curriculum Agent
 
 A sophisticated language learning curriculum generator with REST API that uses LlamaIndex for semantic knowledge retrieval and Google Gemini 2.0 Flash for intelligent content generation.
 
