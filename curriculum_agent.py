@@ -1,5 +1,6 @@
 import os
 import json
+import requests
 from typing import Dict, List
 from dataclasses import dataclass
 from dotenv import load_dotenv
@@ -9,6 +10,10 @@ from llama_index.core.settings import Settings
 from llama_index.llms.google_genai import GoogleGenAI
 from pydantic import BaseModel
 
+# Brightdata API configuration
+BRIGHTDATA_PROXY = "brd.superproxy.io:33335"
+BRIGHTDATA_USER = "brd-customer-hl_b08cb01d-zone-real_time_search:ja7epdjc7a5t"
+bright_data = False
 # Load environment variables
 load_dotenv()
 
@@ -44,6 +49,8 @@ class LlamaCurriculumAgent:
         self.real_world_cache = {}
         self._precompute_contexts()
         print("✅ Knowledge contexts pre-computed successfully!")
+        
+
         
     def _build_knowledge_index(self) -> VectorStoreIndex:
         """Build LlamaIndex with comprehensive knowledge base for language learning."""
@@ -182,8 +189,101 @@ class LlamaCurriculumAgent:
             "cache_hit_rate": "100%" if len(self.knowledge_cache) > 0 else "0%"
         }
     
+    def _fetch_brightdata_api(self, scenario: str, target_language: str) -> str:
+        """Fetch real-world data from Brightdata API for the given scenario and language."""
+        try:
+            # Create query from language + scenario
+            query = f"{target_language} {scenario}"
+            
+            # Construct the API URL (equivalent to curl command)
+            url = f"https://www.google.com/search?q={query}&start=0&num=10"
+            
+            # Set up proxy configuration (equivalent to --proxy and --proxy-user)
+            proxies = {
+                "http": f"http://brd-customer-hl_b08cb01d-zone-real_time_search:ja7epdjc7a5t@brd.superproxy.io:33335",
+                "https": f"http://brd-customer-hl_b08cb01d-zone-real_time_search:ja7epdjc7a5t@brd.superproxy.io:33335"
+            }
+            
+            # Make the API request (equivalent to curl -v --compressed --proxy ... -k)
+            response = requests.get(
+                url,
+                proxies=proxies,
+                verify=False,  # -k flag equivalent
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+                    "Accept-Encoding": "gzip, deflate, br"  # --compressed equivalent
+                },
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                return response.text
+            else:
+                print(f"Brightdata API returned status code: {response.status_code}")
+                return ""
+                
+        except Exception as e:
+            print(f"Error fetching data from Brightdata API: {e}")
+            return ""
+    
+    def _parse_brightdata_response(self, api_response: str, scenario: str, target_language: str) -> Dict[str, str]:
+        """Parse the Brightdata API response and extract relevant information."""
+        try:
+            # Use Gemini to parse and structure the API response
+            prompt = f"""
+            Parse the following Google Maps search results for {scenario} in {target_language} context.
+            Extract relevant information and format it as JSON with the following structure:
+            {{
+                "menu_items": "Extracted menu items, prices, and services",
+                "common_phrases": "Common phrases used in this context",
+                "cultural_notes": "Cultural observations and local customs"
+            }}
+            
+            API Response:
+            {api_response[:2000]}  # Limit to first 2000 chars to avoid token limits
+            
+            Focus on authentic, real-world information that would be useful for language learners.
+            """
+            
+            model = genai.GenerativeModel('gemini-2.0-flash')
+            response = model.generate_content(prompt)
+            
+            # Extract JSON from response
+            response_text = response.text.strip()
+            if response_text.startswith('```json'):
+                response_text = response_text[7:]
+            if response_text.endswith('```'):
+                response_text = response_text[:-3]
+            response_text = response_text.strip()
+            
+            parsed_data = json.loads(response_text)
+            return parsed_data
+            
+        except Exception as e:
+            print(f"Error parsing Brightdata response: {e}")
+            return {
+                "menu_items": "N/A",
+                "common_phrases": "N/A", 
+                "cultural_notes": "N/A"
+            }
+    
     def _get_real_world_data(self, scenario: str, target_language: str) -> str:
         """Get real-world data for authenticity."""
+        
+        if bright_data:
+            api_response = self._fetch_brightdata_api(scenario, target_language)
+            
+            if api_response:
+                parsed_data = self._parse_brightdata_response(api_response, scenario, target_language)
+                
+                return f"""
+                Real-world context for {scenario} in {target_language}:
+                Menu/Terms: {parsed_data.get('menu_items', 'N/A')}
+                Common Phrases: {parsed_data.get('common_phrases', 'N/A')}
+                Cultural Notes: {parsed_data.get('cultural_notes', 'N/A')}
+                """
+        
+        # Use mock data
         real_world_data = {
             "cafe_order": {
                 "French": {
